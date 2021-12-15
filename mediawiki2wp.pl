@@ -1,8 +1,8 @@
 #!/usr/bin/perl
 
-# Modified by George Smart, M1GEO
-# Originally from: http://www.analogrithems.com/rant/portfolio/mediawiki2wordpress/
-# Fri 20 Jan 2017 - Sat 4 Feb 2017
+# Modified by Igor Absorto (absorto.dev) - November 2021
+# Originally modified by George Smart, M1GEO
+# based originally on: http://www.analogrithems.com/rant/portfolio/mediawiki2wordpress/
 
 use strict;
 use warnings;
@@ -15,17 +15,16 @@ use POSIX qw/strftime/;
 use vars qw/ %opt /;
 
 my $version = "$0 v0.2";
-my $post_type = 'page';
+my $post_type = 'post';
 my $ping_status = 'closed';
 my $parent = 0;
 my $comment_status = 'closed';
 my $redirect = 0;
 my $listimages = 0;
-my $page_status = 'draft'; # mark as draft and I publish when checked.
-my $url = 'http://new.george-smart.co.uk';
+my $page_status = 'publish'; # it may be better to mark as draft and only publish it after tidying up
+my $url = '---'; # redacted
 my $imgurl = $url . '/wordpress/wp-content/uploads';
 my $medurl = $url . '/wordpress/wp-content/uploads/bin';
-
 
 #
 # Command line options processing
@@ -56,11 +55,11 @@ sub usage(){
 	print STDERR <<"EOF";
 $0 -f <mediaWikiFile.xml> [-o <outputfile>] [-v] [-h] [-V]
 
--f 	The XML file that was exported from media wiki
+-f	The XML file that was exported from mediawiki
 -o	Output file to store the wordpress XML in.  If not defined, goes straight to STDOUT
--r  Write Apache 'RewriteRule' lines to STDERR for redirecting old pages to new URLs
--i  Write a list of image locations and paths to STDERR to help migrate them
--h 	This help message
+-r	Write Apache 'RewriteRule' lines to STDERR for redirecting old pages to new URLs
+-i	Write a list of image locations and paths to STDERR to help migrate them
+-h	This help message
 -u	Base URL
 -v	Verbose
 -V	Version
@@ -79,6 +78,7 @@ sub ctime(){
 	my $tm = str2time(shift());
 	return strftime('%Y-%m-%d %T',localtime($tm));
 }
+
 sub main(){
 
 	print $opt{f}."\n";
@@ -88,7 +88,6 @@ sub main(){
 	$rss->add_module(prefix=>'wfw', uri=>'http://wellformedweb.org/CommentAPI/');
 	$rss->add_module(prefix=>'dc', uri=>'http://purl.org/dc/elements/1.1/');
 	$rss->add_module(prefix=>'wp', uri=>'http://wordpress.org/export/1.0/');
-	
 
 	$rss->channel(
 		title		=> 'MediaWiki to Wordpres Migrator',
@@ -99,12 +98,12 @@ sub main(){
 		{
 			base_site_url 	=> $url,
 			base_blog_url	=> $url,
-			wxr_version	=> 1.1,
-			author		=>
+			wxr_version		=> 1.1,
+			author			=>
 			{
-				author_id	=> 2,
-				author_login	=> 'admin',
-				author_email	=> '',
+				author_id			=> 2,
+				author_login		=> 'admin',
+				author_email		=> '',
 				author_display_name => '',
 				author_first_name   => '',
 				author_last_name    => ''
@@ -121,7 +120,10 @@ sub main(){
 		$mw_link = $page_i->{title};
 		$mw_link =~ s/ /_/g;
 		$mw_link =~ s/[^\w]/_/g;
-		
+
+		# Code for removing Blog template {{Blog|1...2
+		$content_temp =~ s/\{\{Blog\|1=(.+)\|2=\}\}/$1/smg;
+
 		# Code for handling block quotes (wordpress) from indented lines (mediawiki)
 		my $inBlockQuote = 0;
 		my $new_content_temp = "";
@@ -150,7 +152,7 @@ sub main(){
 				$line =~ s/^\*//;
 				$line = "<ul>\n<li>" . $line . "</li>";
 				$inUL = 1;
-			} elsif (($line =~ m/^\*/) && ($inUL == 1)) { 
+			} elsif (($line =~ m/^\*/) && ($inUL == 1)) {
 				# Inside UL
 				$line =~ s/^\*//;
 				$line = "<li>" . $line . "</li>";
@@ -163,21 +165,21 @@ sub main(){
 		}
 		$content_temp = $new_content_temp;
 		
-		# Parse for [[Category - delete
-		$content_temp =~ s/\[{2}Category(.*?)\]{2}//g;
-		$content_temp =~ s/\[{2}:Category(.*?)\]{2}//g;
+		# Parse for [[Category - just flag it up
+		$content_temp =~ s/\[{2}Category(.*?)\]{2}/<b>FIXME_Category $1<\/b>/g;
+		$content_temp =~ s/\[{2}:Category(.*?)\]{2}/<b>FIXME_Category $1<\/b>/g;
 		
 		# Parse for [[User - just flag it up
 		$content_temp =~ s/\[{2}User(.*?)\]{2}/<b>FIXME_User $1<\/b>/g;
 		
-		# Parse for [[MediaWiki - just flag it up_
+		# Parse for [[MediaWiki - just flag it up
 		$content_temp =~ s/\[{2}MediaWiki(.*?)\]{2}/<b>FIXME_MediaWiki $1<\/b>/g;
 		
 		# Parse for [[Media - make simple hyperlinks
 		$content_temp =~ s/\[{2}Media:(.*?)\|(.*?)\]{2}/<a href=\"$medurl\/$1\">$2<\/a>/g;
 		$content_temp =~ s/\[{2}Media:(.*?)\]{2}/<a href=\"$medurl\/$1\">$1<\/a>/g;
 		
-		# Parse for [[File - look like images (i.e., contain PNG/JPG. 
+		# Parse for [[File - look like images (i.e., contain PNG/JPG.)
 		$content_temp =~ s/\[{2}File:(.*?)([Pp][Nn][Gg])(.*?)\]{2}/[[Image:$1$2$3]]/g;
 		$content_temp =~ s/\[{2}File:(.*?)([Jj][Pp][Gg])(.*?)\]{2}/[[Image:$1$2$3]]/g;
 		
@@ -204,12 +206,14 @@ sub main(){
 		$content_temp =~ s/\ ?[\|\!][\|\!]\ ?/<\/td><td>/g;
 		$content_temp =~ s/^[\|\!]-/<\/td><\/tr><tr>/gm;
 		$content_temp =~ s/^[\|\!]\ ?/<td>/gm;
-		
+
+		# Remove Table template from around images
+		$content_temp =~ s/\{\{table(.+?)\}\}/$1/gsm;
+
 		# Some other bits here
 		$content_temp =~ s/\n\-{4}\n/<hr>/gm;
 		$content_temp =~ s/__NOTOC__//g;
 		$content_temp =~ s/__TOC__//g;
-		#$content_temp =~ s/\n\ *?\: *?(.*?)\n/<div style="text-indent: 1em;">$1<\/div>\n/gm; # try and make something of : indents?
 		$content_temp =~ s/#REDIRECT (.*?)\]{2}/This page was moved here: $1\]\]. <a href="\/contact-me">Please report this message to the webmaster<\/a>\./g;
 		
 		# Attempt to push Gallery Pics through the Image Code
@@ -240,22 +244,21 @@ sub main(){
 					$at =~ s/\"//g;
 				}
 			}
+
 			# form string with tags we have.
 			$imstr = "<a href=\"" . $imgurl . "/" . $dt[0] . "/" . $dt[1] . "/". $fn . "\"><img src=\"" . $imgurl . "/" . $dt[0] . "/" . $dt[1] . "/". $fn . "\"";
 			if ($wd > 0) {$imstr = $imstr . " width=\"" . $wd . "\"";}
 			if ($at ne "") {$imstr = $imstr . " alt=\"" . $at . "\"";}
 			$imstr = $imstr . " class=\"aligncenter\"></a>";
+
 			# replace matching filenames with first matching index.
 			$content_temp =~ s/\[{2}[Ii]mage:$quotedmatch\]{2}/$imstr/g;
 			
 			# if requested print a list of shell commands to move images
 			if ($listimages > 0) {
 				print STDERR "mv `find . -iname '$fn'`  '../" . $dt[0] . "/" . $dt[1] . "/". $fn . "'\n";
-				#print STDERR "$fn\n";
 			}
 		}
-		
-		
 
 		#$content_temp =~ s/\[{1}([\S&&[^\]]+?)\s(.*?)\]{1}/<a href=\"$1\">$2<\/a>/g;
 
@@ -291,42 +294,40 @@ sub main(){
 		if ($redirect > 0) {
 			print STDERR "\t RewriteRule ^/wiki/" . $mw_link ."\t/" . &pageSlug($page_i->{title}) . "\t[R=302]\n";
 		}
-		#if ($page_i->{title} eq "OnlyOutputThisPageTitle") {
-			$rss->add_item(
-				title		=> $page_i->{title},
-				#link		=> $url.$post_type.'/'.&pageSlug($page_i->{title}),
-				link		=> $url.'/'.&pageSlug($page_i->{title}),
-				description	=> '',
-				dc		=>
-				{
-					creator		=> $page_i->{revision}{contributor}{username}
-				},
-				content		=>
-				{
-					encoded	=> $content_temp
-				},
-				wp		=>
-				{
-					post_date	=> &ctime($page_i->{revision}{timestamp}),
-					post_name	=> &pageSlug($page_i->{title}),
-					status		=> $page_status,
-					post_type	=> $post_type,
-					ping_status	=> $ping_status,
-					comment_status 	=> $comment_status,
-					menu_order	=> '',
-					post_password	=> '',
-					post_id		=> $page_i->{revision}{id},
-					post_parent	=> $parent
-					
-				}
-			);
-		#}
+
+		$rss->add_item(
+			title		=> $page_i->{title},
+			#link		=> $url.$post_type.'/'.&pageSlug($page_i->{title}),
+			link		=> $url.'/'.&pageSlug($page_i->{title}),
+			description	=> '',
+			dc		=>
+			{
+				creator		=> $page_i->{revision}{contributor}{username}
+			},
+			content		=>
+			{
+				encoded	=> $content_temp
+			},
+			wp		=>
+			{
+				post_date	=> &ctime($page_i->{revision}{timestamp}),
+				post_name	=> &pageSlug($page_i->{title}),
+				status		=> $page_status,
+				post_type	=> $post_type,
+				ping_status	=> $ping_status,
+				comment_status 	=> $comment_status,
+				menu_order	=> '',
+				post_password	=> '',
+				post_id		=> $page_i->{revision}{id},
+				post_parent	=> $parent
+			}
+		);
 	}
+
 	if($opt{o}){
 		$rss->save($opt{o});
 	}else{
 		print $rss->as_string."\n";
 	}
-
 }
 init();
